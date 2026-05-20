@@ -1,0 +1,202 @@
+WITH tb_clientes AS (
+    -- Base de clientes no grão correto (1 linha por cliente)
+    SELECT
+        cct.codigo AS cod_cliente,
+        MIN(DATE(cct.assinatura)) AS primeira_assinatura,
+
+        -- ==========================================
+        -- VALORES FINANCEIROS POR STATUS (PIVOT)
+        -- ==========================================
+        -- Soma o valor atual que o cliente paga (MRR Ativo)
+        SUM(CASE WHEN cct.status = 3 THEN cct.valor_contrato ELSE 0 END) AS valor_ativo_total,
+        
+        -- Soma o valor que já foi cancelado na história desse cliente
+        SUM(CASE WHEN cct.status = 4 THEN cct.valor_contrato ELSE 0 END) AS valor_cancelado_total,
+
+        -- ==========================================
+        -- VOLUMETRIA DE CONTRATOS
+        -- ==========================================
+        SUM(CASE WHEN cct.status = 3 THEN 1 ELSE 0 END) AS qtd_contratos_ativos,
+        SUM(CASE WHEN cct.status = 4 THEN 1 ELSE 0 END) AS qtd_contratos_cancelados,
+
+        -- ==========================================
+        -- COMPORTAMENTO DE RECORRÊNCIA (FEATURES)
+        -- ==========================================
+        -- Teve downgrade? (Se tem contrato ativo hoje E já cancelou algum contrato no passado)
+        CASE 
+            WHEN SUM(CASE WHEN cct.status = 3 THEN 1 ELSE 0 END) > 0 
+                 AND SUM(CASE WHEN cct.status = 4 THEN 1 ELSE 0 END) > 0 
+            THEN 1 ELSE 0 
+        END AS flg_ja_sofreu_downgrade,
+
+        -- ==========================================
+        -- TARGET (y) - CHURN REAL
+        -- ==========================================
+        -- 1 = Churn Real (Não tem mais nenhum contrato ativo)
+        -- 0 = Cliente Ativo (Mantém pelo menos 1 contrato ativo)
+        CASE 
+            WHEN
+				SUM(
+					CASE
+						WHEN cct.status = 3
+							THEN 1
+							ELSE 0
+						END
+					) = 0 THEN 1
+            ELSE 0
+        END AS churn
+
+    FROM gecobi2.consolida_contratos cct
+    WHERE cct.assinatura IS NOT NULL
+      AND cct.status IN (3, 4) -- Ativos e Cancelados
+--       AND cct.codigo = 46084   -- Filtro de teste
+    GROUP BY cct.codigo
+),
+
+tb_tarefas AS (
+    -- Base de tarefas (nível transacional)
+    SELECT
+        otb.cliente AS cod_cliente,
+        otb.data_cad,
+        otb.data_exe,
+        DATEDIFF(otb.data_exe, otb.data_cad) AS dias_exec_tarefa,
+
+        otb.categoria,
+        stv1.dst AS descr_categoria,
+        otb.subcategoria,
+        stv2.dst AS descr_subcategoria,
+        otb.prioridade,
+
+        -- tarefa concluída
+        CASE
+            WHEN sto.sto IN ('X', 'V') THEN 1
+            ELSE 0
+        END AS tarefa_finalizada,
+
+        utb.grupo_trabalho
+
+    FROM gecobi2.ordemser_tb otb
+
+    LEFT JOIN gecobi2.stos_tb sto
+        ON otb.stos = sto.cod
+
+    LEFT JOIN gecobi2.usu_tb utb
+        ON otb.para1 = utb.cod_usu
+    
+    LEFT JOIN gecobi2.stven_tb stv1
+		ON otb.categoria = stv1.st
+    
+    LEFT JOIN gecobi2.stven_tb stv2
+		ON otb.subcategoria = stv2.st
+
+    WHERE otb.nros_sub = 0 -- Somente tarefas principais
+        AND otb.stos NOT IN ('CAN', 'PGE') -- Tarefas Canceladas ou de Faturamento
+        AND LOWER(stv1.dst) NOT LIKE '%cancel%' -- Garante exclusão na categoria
+    	AND LOWER(stv2.dst) NOT LIKE '%cancel%' -- Garante exclusão na subcategoria
+),
+
+tb_features AS (
+    -- Agregação: 1 linha por cliente (features para ML)
+    SELECT
+        t.cod_cliente,
+
+        -- volume de interações
+        COUNT(*) AS qtd_tarefas_total,
+
+        -- recência operacional (última atividade)
+        DATEDIFF(CURDATE(), MAX(t.data_cad)) AS dias_ultima_tarefa,
+
+        -- atividade recente
+        SUM(
+            CASE 
+                WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY 
+                THEN 1 ELSE 0 
+            END
+        ) AS tarefas_90d,
+
+        -- eficiência operacional
+        AVG(t.dias_exec_tarefa) AS media_dias_exec,
+
+        -- backlog (tarefas abertas)
+        SUM(
+            CASE
+                WHEN t.tarefa_finalizada = 0 THEN 1
+                ELSE 0
+            END
+        ) AS qtd_tarefas_abertas,
+
+        -- diversidade de uso
+        COUNT(DISTINCT t.categoria)         AS qtd_categorias_distintas,
+        COUNT(DISTINCT t.subcategoria)      AS qtd_subcategorias_distintas,
+        COUNT(DISTINCT t.grupo_trabalho)    AS qtd_grupos_envolvidos,
+        
+        SUM(CASE WHEN t.categoria IN (18402, 18441, 18468) THEN 1 ELSE 0 END) AS qt_tarefas_reducao,
+		SUM(
+			CASE
+				WHEN LOWER(t.descr_categoria) LIKE '%bug%'
+					OR LOWER(t.descr_subcategoria) LIKE '%bug%'
+						THEN 1
+					ELSE 0
+				END) AS qt_tarefas_bug,
+
+        -- =========================================
+        -- PRIORIDADES (FEATURES IMPORTANTES PARA CHURN)
+        -- =========================================
+
+        SUM(CASE WHEN t.prioridade IN (0,1) THEN 1 ELSE 0 END)  AS qtd_prioridade_normal,
+        SUM(CASE WHEN t.prioridade = 2 THEN 1 ELSE 0 END)       AS qtd_prioridade_parcial,
+        SUM(CASE WHEN t.prioridade = 3 THEN 1 ELSE 0 END)       AS qtd_prioridade_urgente,
+        SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END)       AS qtd_prioridade_maxima,
+        SUM(CASE WHEN t.prioridade = 9 THEN 1 ELSE 0 END)       AS qtd_prioridade_reforco,
+
+        -- proporções (ajuda muito Logistic Regression)
+        SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END) / COUNT(*) AS perc_prioridade_maxima,
+        SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) / COUNT(*) AS perc_tarefas_abertas
+
+    FROM tb_tarefas t
+    GROUP BY t.cod_cliente
+)
+
+-- =========================
+-- DATASET FINAL (X + y)
+-- =========================
+SELECT
+    c.cod_cliente,
+    c.primeira_assinatura,
+
+    -- FEATURES FINANCEIRAS / CONTRATO (Mapeadas da agregação)
+    c.valor_ativo_total,
+    c.valor_cancelado_total,
+    c.qtd_contratos_ativos,
+    c.qtd_contratos_cancelados,
+    c.flg_ja_sofreu_downgrade,
+
+    -- FEATURES OPERACIONAIS (X)
+    COALESCE(f.qtd_tarefas_total, 0) 			AS qtd_tarefas_total,
+    COALESCE(f.dias_ultima_tarefa, 0) 			AS dias_ultima_tarefa,
+    COALESCE(f.tarefas_90d, 0) 					AS tarefas_90d,
+    COALESCE(f.media_dias_exec, 0) 				AS media_dias_exec,
+    COALESCE(f.qtd_tarefas_abertas, 0) 			AS qtd_tarefas_abertas,
+    COALESCE(f.qtd_categorias_distintas, 0) 	AS qtd_categorias_distintas,
+    COALESCE(f.qtd_subcategorias_distintas, 0)	AS qtd_subcategorias_distintas,
+    COALESCE(f.qtd_grupos_envolvidos, 0) 		AS qtd_grupos_envolvidos,
+    
+    COALESCE(f.qt_tarefas_bug, 0) 				AS qt_tarefas_bug,
+    COALESCE(f.qt_tarefas_reducao, 0) 			AS qt_tarefas_reducao,
+
+    COALESCE(f.qtd_prioridade_normal, 0) 		AS qtd_prioridade_normal,
+    COALESCE(f.qtd_prioridade_parcial, 0)		AS qtd_prioridade_parcial,
+    COALESCE(f.qtd_prioridade_urgente, 0) 		AS qtd_prioridade_urgente,
+    COALESCE(f.qtd_prioridade_maxima, 0) 		AS qtd_prioridade_maxima,
+    COALESCE(f.qtd_prioridade_reforco, 0) 		AS qtd_prioridade_reforco,
+
+    COALESCE(f.perc_prioridade_maxima * 100, 0)	AS perc_prioridade_maxima,
+    COALESCE(f.perc_tarefas_abertas * 100, 0) 	AS perc_tarefas_abertas,
+
+    -- TARGET (y)
+    c.churn
+
+FROM tb_clientes c
+
+LEFT JOIN tb_features f
+    ON c.cod_cliente = f.cod_cliente;
