@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+*.csv
+*.xlsx
+.gitignore
+dados_brutos/*.csv
+dados_brutos/validacao_modelo_churn.csv

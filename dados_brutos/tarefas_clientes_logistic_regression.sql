@@ -47,7 +47,7 @@ WITH tb_clientes AS (
 
     FROM gecobi2.consolida_contratos cct
     WHERE cct.assinatura IS NOT NULL
-      AND cct.status IN (3, 4)
+      AND cct.status IN (3, 4) -- Ativos e Cancelados
 --       AND cct.codigo = 21598
     GROUP BY cct.codigo
 ),
