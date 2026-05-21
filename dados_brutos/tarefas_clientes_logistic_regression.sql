@@ -66,10 +66,10 @@ tb_tarefas AS (
         otb.prioridade,
 
         -- tarefa concluída
-        CASE
-            WHEN sto.sto IN ('X', 'V') THEN 1
-            ELSE 0
-        END AS tarefa_finalizada,
+--         CASE
+--             WHEN sto.sto IN ('X', 'V') THEN 1
+--             ELSE 0
+--         END AS tarefa_finalizada,
 
         utb.grupo_trabalho
 
@@ -89,8 +89,21 @@ tb_tarefas AS (
 
     WHERE otb.nros_sub = 0 
         AND otb.stos NOT IN ('CAN', 'PGE') -- Tarefas Canceladas ou de Faturamento
-        AND LOWER(stv1.dst) NOT LIKE '%cancel%' -- Categoria de Cancelamento de MRR
-        AND LOWER(stv2.dst) NOT LIKE '%cancel%'  -- Subcategoria de Cancelamento de MRR
+        AND LOWER(COALESCE(stv1.dst, '')) NOT LIKE '%cancel%' -- Categoria de Cancelamento de MRR
+        AND LOWER(COALESCE(stv2.dst, '')) NOT LIKE '%cancel%' -- Subcategoria de Cancelamento de MRR
+		AND otb.categoria NOT IN (210,   -- INSTALAÇÃO
+							  224,   -- TREINAMENTO / ATENDIMENTO PRESENCIAL
+							  225,   -- TREINAMENTO / ATENDIMENTO REMOTO
+							  352,   -- CONTRATO -RENOVAÇÃO CONTRATUAL
+							  367,   -- DUVIDAS CONTRATUAIS
+							  16375, -- PREÂMBULO ACADEMY
+							  15693, -- TREINAMENTO CRM
+							  17367, -- MELHORIAS 3C
+							  17536, -- SUGESTÃO DE MELHORIA
+							  18327, -- CONTRATO OFFICE
+							  21486  -- VENDAS COMERCIAL
+							  )
+		AND sto.descr NOT LIKE '%RETORNO%' -- Tarefas que a continuidade depende do cliente
 ),
 
 tb_features AS (
@@ -116,15 +129,48 @@ tb_features AS (
         AVG(t.dias_exec_tarefa) AS media_dias_exec,
 
         -- backlog (tarefas abertas)
-        SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
+--         SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
 
         -- diversidade de uso
         COUNT(DISTINCT t.categoria)         AS qtd_categorias_distintas,
         COUNT(DISTINCT t.subcategoria)      AS qtd_subcategorias_distintas,
-        COUNT(DISTINCT t.grupo_trabalho)    AS qtd_grupos_envolvidos,
+        COUNT(DISTINCT t.grupo_trabalho)	AS qtd_grupos_envolvidos,
         
-        SUM(CASE WHEN t.categoria IN (18402, 18441, 18468) THEN 1 ELSE 0 END) AS qt_tarefas_reducao,
-        SUM(CASE WHEN LOWER(t.descr_categoria) LIKE '%bug%' OR LOWER(t.descr_subcategoria) LIKE '%bug%' THEN 1 ELSE 0 END) AS qt_tarefas_bug,
+        SUM(
+			CASE
+				WHEN t.grupo_trabalho IN (3,29, 64) -- Service Desk
+					THEN 1
+				ELSE 0
+			END) AS qt_tarefas_sd,
+        
+        SUM(
+			CASE
+				WHEN t.grupo_trabalho IN (5, 23, 63) -- Help Desk
+					THEN 1
+				ELSE 0
+			END) AS qt_tarefas_hd,
+        
+        SUM(
+			CASE
+				WHEN t.categoria IN (304)
+					THEN 1
+				ELSE 0
+			END) AS qt_tarefas_reclamacao,
+        
+        SUM(
+			CASE
+				WHEN t.categoria IN (18402, 18441, 18468)
+					THEN 1
+				ELSE 0
+			END) AS qt_tarefas_reducao,
+			
+        SUM(
+			CASE
+				WHEN LOWER(t.descr_categoria) LIKE '%bug%'
+					OR LOWER(t.descr_subcategoria) LIKE '%bug%'
+					THEN 1
+				ELSE 0
+			END) AS qt_tarefas_bug,
 
         -- PRIORIDADES
         SUM(CASE WHEN t.prioridade IN (0,1) THEN 1 ELSE 0 END)  AS qtd_prioridade_normal,
@@ -134,8 +180,8 @@ tb_features AS (
         SUM(CASE WHEN t.prioridade = 9 THEN 1 ELSE 0 END)       AS qtd_prioridade_reforco,
 
         -- proporções
-        SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END) / COUNT(*) AS perc_prioridade_maxima,
-        SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) / COUNT(*) AS perc_tarefas_abertas
+        SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END) / COUNT(*) AS perc_prioridade_maxima
+--         SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) / COUNT(*) AS perc_tarefas_abertas
 
     FROM tb_tarefas t
     GROUP BY t.cod_cliente
@@ -172,11 +218,14 @@ SELECT
 
     COALESCE(f.tarefas_90d, 0)                  AS tarefas_90d,
     COALESCE(f.media_dias_exec, 0)              AS media_dias_exec,
-    COALESCE(f.qtd_tarefas_abertas, 0)          AS qtd_tarefas_abertas,
+--     COALESCE(f.qtd_tarefas_abertas, 0)          AS qtd_tarefas_abertas,
     COALESCE(f.qtd_categorias_distintas, 0)     AS qtd_categorias_distintas,
     COALESCE(f.qtd_subcategorias_distintas, 0)  AS qtd_subcategorias_distintas,
     COALESCE(f.qtd_grupos_envolvidos, 0)        AS qtd_grupos_envolvidos,
-    
+
+    COALESCE(f.qt_tarefas_sd, 0)        		AS qt_tarefas_sd,
+    COALESCE(f.qt_tarefas_hd, 0)        		AS qt_tarefas_hd,
+    COALESCE(f.qt_tarefas_reclamacao, 0)        AS qt_tarefas_reclamacao,
     COALESCE(f.qt_tarefas_bug, 0)               AS qt_tarefas_bug,
     COALESCE(f.qt_tarefas_reducao, 0)           AS qt_tarefas_reducao,
 
@@ -187,7 +236,7 @@ SELECT
     COALESCE(f.qtd_prioridade_reforco, 0)       AS qtd_prioridade_reforco,
 
     COALESCE(f.perc_prioridade_maxima * 100, 0) AS perc_prioridade_maxima,
-    COALESCE(f.perc_tarefas_abertas * 100, 0)   AS perc_tarefas_abertas,
+--     COALESCE(f.perc_tarefas_abertas * 100, 0)   AS perc_tarefas_abertas,
 
     -- TARGET (y)
     c.churn
