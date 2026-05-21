@@ -48,7 +48,7 @@ WITH tb_clientes AS (
     FROM gecobi2.consolida_contratos cct
     WHERE cct.assinatura IS NOT NULL
       AND cct.status IN (3, 4) -- Ativos e Cancelados
---       AND cct.codigo = 21598
+--        AND cct.codigo = 21598
     GROUP BY cct.codigo
 ),
 
@@ -161,7 +161,7 @@ tb_features AS (
 		AVG(t.dias_exec_tarefa_bug) 		AS media_dias_exec_bug,
 		
         -- backlog (tarefas abertas)
---         SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
+--          SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
 
         -- diversidade de uso
         COUNT(DISTINCT t.categoria)         AS qtd_categorias_distintas,
@@ -203,6 +203,25 @@ tb_features AS (
 					THEN 1
 				ELSE 0
 			END) AS qt_tarefas_bug,
+
+		-- ==========================================
+		-- NOVAS VOLUMETRIAS EXCLUSIVAS DE 90 DIAS
+		-- ==========================================
+		SUM(
+			CASE
+				WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY
+					 AND t.categoria IN (304)
+					THEN 1
+				ELSE 0
+			END) AS qt_reclamacoes_90d,
+
+		SUM(
+			CASE
+				WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY
+					 AND (LOWER(t.descr_categoria) LIKE '%bug%' OR LOWER(t.descr_subcategoria) LIKE '%bug%')
+					THEN 1
+				ELSE 0
+			END) AS qt_bugs_90d,
 
         -- PRIORIDADES
         SUM(CASE WHEN t.prioridade IN (0,1) THEN 1 ELSE 0 END)  AS qtd_prioridade_normal,
@@ -252,8 +271,7 @@ SELECT
 	COALESCE(f.qt_tarefas_bug, 0)               AS qt_tarefas_bug,
 	COALESCE(f.media_dias_exec_bug, 0) 			AS media_dias_exec_bug,
     
-    
-	-- PROTEÇÃO CONTRA NEGATIVOS: Se der menor que 0, vira 0 (Uso máximo até o cancelamento)	
+    -- PROTEÇÃO CONTRA NEGATIVOS: Se der menor que 0, vira 0 (Uso máximo até o cancelamento)	
 	CASE 
         WHEN c.churn = 1 THEN 
             -- Se nunca abriu tarefa, a recência assume o tempo total de casa (Data Cancelamento - Assinatura)
@@ -275,6 +293,37 @@ SELECT
 
     COALESCE(f.perc_prioridade_maxima * 100, 0) AS perc_prioridade_maxima,
 --     COALESCE(f.perc_tarefas_abertas * 100, 0)   AS perc_tarefas_abertas,
+
+	-- ==========================================
+	-- NOVAS FEATURES: SAÚDE & ATRITO TÉCNICO
+	-- ==========================================
+	
+	-- 1. PROPORÇÃO DE ATRITO CRÍTICO RECENTE
+	-- Mede a porcentagem das tarefas dos últimos 90 dias que foram motivadas por Bugs ou Reclamações.
+	-- Evita a divisão por zero caso o cliente esteja em silêncio absoluto na janela de 90 dias.
+	CASE
+		WHEN COALESCE(f.tarefas_90d, 0) > 0
+			THEN ROUND((COALESCE(f.qt_bugs_90d, 0) + COALESCE(f.qt_reclamacoes_90d, 0)) / f.tarefas_90d * 100, 2)
+		ELSE 0
+	END AS prop_atrito_recentes_percentual,
+
+	-- 2. ÍNDICE DE TENDÊNCIA DE CHAMADOS (ANOMALIA DE VOLUME)
+	-- Compara o volume diário dos últimos 90 dias com a média diária histórica de todo o ciclo de vida do cliente.
+	-- Valores muito superiores a 1.0 indicam que o cliente entrou em uma crise operacional abrupta de chamados.
+	CASE
+		WHEN (COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) > 0
+			 THEN ROUND(
+				(COALESCE(f.tarefas_90d, 0) / 90.0) / 
+				((COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) / 
+				 GREATEST(1, DATEDIFF(CURDATE(), c.primeira_assinatura))), 2
+			 )
+		ELSE 1.0
+	END AS index_tendencia_volume_recentes,
+
+	-- 3. EFICIÊNCIA DE ATENDIMENTO VS TAMANHO DO CLIENTE (MÉTRICA ENTERPRISE)
+	-- Multiplica o tempo médio de resolução de reclamações pelo faturamento mensal ativo.
+	-- O objetivo é penalizar severamente a lentidão no suporte para contas de alto MRR (Alto valor com alto SLA estourado = Risco Crítico).
+	ROUND(COALESCE(f.media_dias_exec_reclamacao, 0) * COALESCE(c.valor_ativo_total, 0), 2) AS score_atrito_sla_financeiro,
 
     -- TARGET (y)
     c.churn
