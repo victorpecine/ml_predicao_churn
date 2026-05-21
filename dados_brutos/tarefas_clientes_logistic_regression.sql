@@ -48,6 +48,7 @@ WITH tb_clientes AS (
     FROM gecobi2.consolida_contratos cct
     WHERE cct.assinatura IS NOT NULL
       AND cct.status IN (3, 4)
+--       AND cct.codigo = 21598
     GROUP BY cct.codigo
 ),
 
@@ -65,13 +66,39 @@ tb_tarefas AS (
         stv2.dst AS descr_subcategoria,
         otb.prioridade,
 
-        -- tarefa concluída
---         CASE
---             WHEN sto.sto IN ('X', 'V') THEN 1
---             ELSE 0
---         END AS tarefa_finalizada,
+	CASE
+	    WHEN utb.grupo_trabalho IN (3, 29, 64) AND sto.sto IN ('X', 'V') -- Finalizadas
+			THEN DATEDIFF(otb.data_exe, otb.data_cad)
+	    ELSE NULL -- NULL garante que o AVG ignore as tarefas de outros grupos
+	END AS dias_exec_tarefa_sd,
 
-        utb.grupo_trabalho
+	CASE
+	    WHEN utb.grupo_trabalho IN (5, 23, 63) AND sto.sto IN ('X', 'V')
+			THEN DATEDIFF(otb.data_exe, otb.data_cad)
+	    ELSE NULL
+	END AS dias_exec_tarefa_hd,
+
+	CASE
+	    WHEN otb.categoria IN (304) AND sto.sto IN ('X', 'V')
+			THEN DATEDIFF(otb.data_exe, otb.data_cad)
+	    ELSE NULL
+	END AS dias_exec_tarefa_reclamacao,
+
+	CASE
+	    WHEN otb.categoria IN (18402, 18441, 18468) AND sto.sto IN ('X', 'V')
+			THEN DATEDIFF(otb.data_exe, otb.data_cad)
+	    ELSE NULL
+	END AS dias_exec_tarefa_reducao,
+
+	CASE
+		WHEN (
+				LOWER(stv1.dst) LIKE '%bug%' OR LOWER(stv2.dst) LIKE '%bug%'
+			) AND sto.sto IN ('X', 'V')
+			THEN DATEDIFF(otb.data_exe, otb.data_cad)
+	    ELSE NULL
+	END AS dias_exec_tarefa_bug,
+	
+	utb.grupo_trabalho
 
     FROM gecobi2.ordemser_tb otb
 
@@ -126,8 +153,13 @@ tb_features AS (
         ) AS tarefas_90d,
 
         -- eficiência operacional
-        AVG(t.dias_exec_tarefa) AS media_dias_exec,
-
+        AVG(t.dias_exec_tarefa) 			AS media_dias_exec,
+		AVG(t.dias_exec_tarefa_sd) 			AS media_dias_exec_tarefa_sd,
+		AVG(t.dias_exec_tarefa_hd) 			AS media_dias_exec_tarefa_hd,
+		AVG(t.dias_exec_tarefa_reclamacao) 	AS media_dias_exec_reclamacao,
+		AVG(t.dias_exec_tarefa_reducao) 	AS media_dias_exec_reducao,
+		AVG(t.dias_exec_tarefa_bug) 		AS media_dias_exec_bug,
+		
         -- backlog (tarefas abertas)
 --         SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
 
@@ -166,8 +198,8 @@ tb_features AS (
 			
         SUM(
 			CASE
-				WHEN LOWER(t.descr_categoria) LIKE '%bug%'
-					OR LOWER(t.descr_subcategoria) LIKE '%bug%'
+				WHEN 
+					LOWER(t.descr_categoria) LIKE '%bug%' OR LOWER(t.descr_subcategoria) LIKE '%bug%'
 					THEN 1
 				ELSE 0
 			END) AS qt_tarefas_bug,
@@ -179,9 +211,7 @@ tb_features AS (
         SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END)       AS qtd_prioridade_maxima,
         SUM(CASE WHEN t.prioridade = 9 THEN 1 ELSE 0 END)       AS qtd_prioridade_reforco,
 
-        -- proporções
         SUM(CASE WHEN t.prioridade = 4 THEN 1 ELSE 0 END) / COUNT(*) AS perc_prioridade_maxima
---         SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) / COUNT(*) AS perc_tarefas_abertas
 
     FROM tb_tarefas t
     GROUP BY t.cod_cliente
@@ -201,11 +231,28 @@ SELECT
     c.qtd_contratos_cancelados,
     c.flg_ja_sofreu_downgrade,
 
-    -- FEATURES OPERACIONAIS (X)
-    COALESCE(f.qtd_tarefas_total, 0) AS qtd_tarefas_total,
+    -- FEATURES OPERACIONAIS
+    COALESCE(f.tarefas_90d, 0)                  AS tarefas_90d,
     
---     c.data_ultimo_cancelamento,
---     f.data_ultima_tarefa_real,
+    COALESCE(f.qtd_tarefas_total, 0) 			AS qtd_tarefas_total,
+    COALESCE(f.media_dias_exec, 0)              AS media_dias_exec,
+    
+    COALESCE(f.qt_tarefas_sd, 0)        		AS qt_tarefas_sd,
+    COALESCE(f.media_dias_exec_tarefa_sd, 0)	AS media_dias_exec_tarefa_sd,
+    
+    COALESCE(f.qt_tarefas_hd, 0)        		AS qt_tarefas_hd,
+    COALESCE(f.media_dias_exec_tarefa_hd, 0)	AS media_dias_exec_tarefa_hd,
+    
+    COALESCE(f.qt_tarefas_reclamacao, 0)        AS qt_tarefas_reclamacao,
+    COALESCE(f.media_dias_exec_reclamacao, 0) 	AS media_dias_exec_reclamacao,
+    
+    COALESCE(f.qt_tarefas_reducao, 0)           AS qt_tarefas_reducao,
+    COALESCE(f.media_dias_exec_reducao, 0) 		AS media_dias_exec_reducao,
+    
+	COALESCE(f.qt_tarefas_bug, 0)               AS qt_tarefas_bug,
+	COALESCE(f.media_dias_exec_bug, 0) 			AS media_dias_exec_bug,
+    
+    
 	-- PROTEÇÃO CONTRA NEGATIVOS: Se der menor que 0, vira 0 (Uso máximo até o cancelamento)	
 	CASE 
         WHEN c.churn = 1 THEN 
@@ -215,19 +262,10 @@ SELECT
             -- Se ativo e sem tarefas, a recência vira o tempo de isolamento desde que entrou (Hoje - Assinatura)
             DATEDIFF(CURDATE(), COALESCE(f.data_ultima_tarefa_real, c.primeira_assinatura))
     END AS dias_ultima_tarefa,
-
-    COALESCE(f.tarefas_90d, 0)                  AS tarefas_90d,
-    COALESCE(f.media_dias_exec, 0)              AS media_dias_exec,
---     COALESCE(f.qtd_tarefas_abertas, 0)          AS qtd_tarefas_abertas,
+    
     COALESCE(f.qtd_categorias_distintas, 0)     AS qtd_categorias_distintas,
     COALESCE(f.qtd_subcategorias_distintas, 0)  AS qtd_subcategorias_distintas,
     COALESCE(f.qtd_grupos_envolvidos, 0)        AS qtd_grupos_envolvidos,
-
-    COALESCE(f.qt_tarefas_sd, 0)        		AS qt_tarefas_sd,
-    COALESCE(f.qt_tarefas_hd, 0)        		AS qt_tarefas_hd,
-    COALESCE(f.qt_tarefas_reclamacao, 0)        AS qt_tarefas_reclamacao,
-    COALESCE(f.qt_tarefas_bug, 0)               AS qt_tarefas_bug,
-    COALESCE(f.qt_tarefas_reducao, 0)           AS qt_tarefas_reducao,
 
     COALESCE(f.qtd_prioridade_normal, 0)        AS qtd_prioridade_normal,
     COALESCE(f.qtd_prioridade_parcial, 0)       AS qtd_prioridade_parcial,
