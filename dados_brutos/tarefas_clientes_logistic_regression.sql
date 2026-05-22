@@ -1,10 +1,10 @@
 WITH tb_clientes AS (
-    -- Base de clientes no grão correto (1 linha por cliente)
+    -- Base de clientes (1 linha por cliente)
     SELECT
         cct.codigo AS cod_cliente,
         MIN(DATE(cct.assinatura)) AS primeira_assinatura,
         
-        -- Guardamos a data do último cancelamento para congelar o tempo do churn
+        -- Traz a data do último cancelamento para congelar o tempo do churn
         -- Se não houver data de cancelamento considera a data de vencimento do contrato
         MAX(
 			CASE
@@ -16,32 +16,31 @@ WITH tb_clientes AS (
 				END
 			) AS data_ultimo_cancelamento,
 
-        -- ==========================================
-        -- VALORES FINANCEIROS POR STATUS (PIVOT)
-        -- ==========================================
+        
+        -- VALORES FINANCEIROS POR STATUS        
         SUM(CASE WHEN cct.status = 3 THEN cct.valor_contrato ELSE 0 END) AS valor_ativo_total,
         SUM(CASE WHEN cct.status = 4 THEN cct.valor_contrato ELSE 0 END) AS valor_cancelado_total,
 
-        -- ==========================================
-        -- VOLUMETRIA DE CONTRATOS
-        -- ==========================================
+        -- VOLUMETRIA DE CONTRATOS        
         SUM(CASE WHEN cct.status = 3 THEN 1 ELSE 0 END) AS qtd_contratos_ativos,
         SUM(CASE WHEN cct.status = 4 THEN 1 ELSE 0 END) AS qtd_contratos_cancelados,
 
-        -- ==========================================
-        -- COMPORTAMENTO DE RECORRÊNCIA (FEATURES)
-        -- ==========================================
+        -- COMPORTAMENTO DE RECORRÊNCIA (FEATURES)       
         CASE 
             WHEN SUM(CASE WHEN cct.status = 3 THEN 1 ELSE 0 END) > 0 
                  AND SUM(CASE WHEN cct.status = 4 THEN 1 ELSE 0 END) > 0 
             THEN 1 ELSE 0 
-        END AS flg_ja_sofreu_downgrade,
-
-        -- ==========================================
-        -- TARGET (y) - CHURN REAL
-        -- ==========================================
+        END AS flag_ja_sofreu_downgrade,
+        
+        -- TARGET (y) - CHURN REAL        
         CASE 
-            WHEN SUM(CASE WHEN cct.status = 3 THEN 1 ELSE 0 END) = 0 THEN 1
+            WHEN
+				SUM(
+					CASE
+						WHEN cct.status = 3
+							THEN 1 
+						ELSE 0
+					END) = 0 THEN 1
             ELSE 0
         END AS churn
 
@@ -53,7 +52,7 @@ WITH tb_clientes AS (
 ),
 
 tb_tarefas AS (
-    -- Base de tarefas (nível transacional)
+    -- Base de tarefas
     SELECT
         otb.cliente AS cod_cliente,
         otb.data_cad,
@@ -67,32 +66,32 @@ tb_tarefas AS (
         otb.prioridade,
 
 	CASE
-	    WHEN utb.grupo_trabalho IN (3, 29, 64) AND sto.sto IN ('X', 'V') -- Finalizadas
+	    WHEN utb.grupo_trabalho IN (3, 29, 64) AND sto.sto IN ('X', 'V') -- Service Desk Finalizadas
 			THEN DATEDIFF(otb.data_exe, otb.data_cad)
 	    ELSE NULL -- NULL garante que o AVG ignore as tarefas de outros grupos
 	END AS dias_exec_tarefa_sd,
 
 	CASE
-	    WHEN utb.grupo_trabalho IN (5, 23, 63) AND sto.sto IN ('X', 'V')
+	    WHEN utb.grupo_trabalho IN (5, 23, 63) AND sto.sto IN ('X', 'V') -- Help Desk Finalizadas
 			THEN DATEDIFF(otb.data_exe, otb.data_cad)
 	    ELSE NULL
 	END AS dias_exec_tarefa_hd,
 
 	CASE
-	    WHEN otb.categoria IN (304) AND sto.sto IN ('X', 'V')
+	    WHEN otb.categoria IN (304) AND sto.sto IN ('X', 'V') -- Reclamações Finalizadas
 			THEN DATEDIFF(otb.data_exe, otb.data_cad)
 	    ELSE NULL
 	END AS dias_exec_tarefa_reclamacao,
 
 	CASE
-	    WHEN otb.categoria IN (18402, 18441, 18468) AND sto.sto IN ('X', 'V')
+	    WHEN otb.categoria IN (18402, 18441, 18468) AND sto.sto IN ('X', 'V') -- Reduções Finalizadas
 			THEN DATEDIFF(otb.data_exe, otb.data_cad)
 	    ELSE NULL
 	END AS dias_exec_tarefa_reducao,
 
 	CASE
 		WHEN (
-				LOWER(stv1.dst) LIKE '%bug%' OR LOWER(stv2.dst) LIKE '%bug%'
+				LOWER(stv1.dst) LIKE '%bug%' OR LOWER(stv2.dst) LIKE '%bug%' -- Bugs Finalizadas
 			) AND sto.sto IN ('X', 'V')
 			THEN DATEDIFF(otb.data_exe, otb.data_cad)
 	    ELSE NULL
@@ -100,36 +99,29 @@ tb_tarefas AS (
 	
 	utb.grupo_trabalho
 
-    FROM gecobi2.ordemser_tb otb
+    FROM 		gecobi2.ordemser_tb otb
+    LEFT JOIN 	gecobi2.stos_tb 	sto 	ON otb.stos 		= sto.cod
+    LEFT JOIN 	gecobi2.usu_tb 		utb 	ON otb.para1 		= utb.cod_usu
+    LEFT JOIN 	gecobi2.stven_tb 	stv1	ON otb.categoria 	= stv1.st
+    LEFT JOIN 	gecobi2.stven_tb 	stv2 	ON otb.subcategoria = stv2.st
 
-    LEFT JOIN gecobi2.stos_tb sto
-        ON otb.stos = sto.cod
-
-    LEFT JOIN gecobi2.usu_tb utb
-        ON otb.para1 = utb.cod_usu
-    
-    LEFT JOIN gecobi2.stven_tb stv1
-        ON otb.categoria = stv1.st
-    
-    LEFT JOIN gecobi2.stven_tb stv2
-        ON otb.subcategoria = stv2.st
-
-    WHERE otb.nros_sub = 0 
+    WHERE otb.nros_sub = 0 -- Somente tarefas principais
         AND otb.stos NOT IN ('CAN', 'PGE') -- Tarefas Canceladas ou de Faturamento
         AND LOWER(COALESCE(stv1.dst, '')) NOT LIKE '%cancel%' -- Categoria de Cancelamento de MRR
         AND LOWER(COALESCE(stv2.dst, '')) NOT LIKE '%cancel%' -- Subcategoria de Cancelamento de MRR
-		AND otb.categoria NOT IN (210,   -- INSTALAÇÃO
-							  224,   -- TREINAMENTO / ATENDIMENTO PRESENCIAL
-							  225,   -- TREINAMENTO / ATENDIMENTO REMOTO
-							  352,   -- CONTRATO -RENOVAÇÃO CONTRATUAL
-							  367,   -- DUVIDAS CONTRATUAIS
-							  16375, -- PREÂMBULO ACADEMY
-							  15693, -- TREINAMENTO CRM
-							  17367, -- MELHORIAS 3C
-							  17536, -- SUGESTÃO DE MELHORIA
-							  18327, -- CONTRATO OFFICE
-							  21486  -- VENDAS COMERCIAL
-							  )
+		AND otb.categoria NOT IN ( -- Tarefas sem importância para churn
+			210,   -- INSTALAÇÃO
+			224,   -- TREINAMENTO / ATENDIMENTO PRESENCIAL
+			225,   -- TREINAMENTO / ATENDIMENTO REMOTO
+			352,   -- CONTRATO -RENOVAÇÃO CONTRATUAL
+			367,   -- DUVIDAS CONTRATUAIS
+			16375, -- PREÂMBULO ACADEMY
+			15693, -- TREINAMENTO CRM
+			17367, -- MELHORIAS 3C
+			17536, -- SUGESTÃO DE MELHORIA
+			18327, -- CONTRATO OFFICE
+			21486  -- VENDAS COMERCIAL
+			)
 		AND sto.descr NOT LIKE '%RETORNO%' -- Tarefas que a continuidade depende do cliente
 ),
 
@@ -138,32 +130,21 @@ tb_features AS (
     SELECT
         t.cod_cliente,
 
-        -- volume de interações
+        -- Volume de interações
         COUNT(*) AS qtd_tarefas_total,
 
-        -- Guardamos apenas a data máxima do cadastro da tarefa para calcular o DATEDIFF no bloco final
+        -- Data máxima do cadastro da tarefa para calcular o DATEDIFF no bloco final
         MAX(t.data_cad) AS data_ultima_tarefa_real,
 
-        -- atividade recente
-        SUM(
-            CASE 
-                WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY 
-                THEN 1 ELSE 0 
-            END
-        ) AS tarefas_90d,
-
-        -- eficiência operacional
+        -- Eficiência operacional
         AVG(t.dias_exec_tarefa) 			AS media_dias_exec,
 		AVG(t.dias_exec_tarefa_sd) 			AS media_dias_exec_tarefa_sd,
 		AVG(t.dias_exec_tarefa_hd) 			AS media_dias_exec_tarefa_hd,
 		AVG(t.dias_exec_tarefa_reclamacao) 	AS media_dias_exec_reclamacao,
 		AVG(t.dias_exec_tarefa_reducao) 	AS media_dias_exec_reducao,
 		AVG(t.dias_exec_tarefa_bug) 		AS media_dias_exec_bug,
-		
-        -- backlog (tarefas abertas)
---          SUM(CASE WHEN t.tarefa_finalizada = 0 THEN 1 ELSE 0 END) AS qtd_tarefas_abertas,
 
-        -- diversidade de uso
+        -- Diversidade de uso
         COUNT(DISTINCT t.categoria)         AS qtd_categorias_distintas,
         COUNT(DISTINCT t.subcategoria)      AS qtd_subcategorias_distintas,
         COUNT(DISTINCT t.grupo_trabalho)	AS qtd_grupos_envolvidos,
@@ -204,9 +185,14 @@ tb_features AS (
 				ELSE 0
 			END) AS qt_tarefas_bug,
 
-		-- ==========================================
-		-- NOVAS VOLUMETRIAS EXCLUSIVAS DE 90 DIAS
-		-- ==========================================
+        -- Quantidade de tarefas abertas nos últimos 90 dias
+        SUM(
+            CASE 
+                WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY 
+                THEN 1 ELSE 0 
+            END
+        ) AS tarefas_90d,
+			
 		SUM(
 			CASE
 				WHEN t.data_cad >= CURDATE() - INTERVAL 90 DAY
@@ -223,7 +209,7 @@ tb_features AS (
 				ELSE 0
 			END) AS qt_bugs_90d,
 
-        -- PRIORIDADES
+        -- Prioridade das tarefas
         SUM(CASE WHEN t.prioridade IN (0,1) THEN 1 ELSE 0 END)  AS qtd_prioridade_normal,
         SUM(CASE WHEN t.prioridade = 2 THEN 1 ELSE 0 END)       AS qtd_prioridade_parcial,
         SUM(CASE WHEN t.prioridade = 3 THEN 1 ELSE 0 END)       AS qtd_prioridade_urgente,
@@ -236,9 +222,7 @@ tb_features AS (
     GROUP BY t.cod_cliente
 )
 
--- =========================
 -- DATASET FINAL (X + y)
--- =========================
 SELECT
     c.cod_cliente,
     c.primeira_assinatura,
@@ -248,7 +232,7 @@ SELECT
     c.valor_cancelado_total,
     c.qtd_contratos_ativos,
     c.qtd_contratos_cancelados,
-    c.flg_ja_sofreu_downgrade,
+    c.flag_ja_sofreu_downgrade,
 
     -- FEATURES OPERACIONAIS
     COALESCE(f.tarefas_90d, 0)                  AS tarefas_90d,
@@ -292,12 +276,8 @@ SELECT
     COALESCE(f.qtd_prioridade_reforco, 0)       AS qtd_prioridade_reforco,
 
     COALESCE(f.perc_prioridade_maxima * 100, 0) AS perc_prioridade_maxima,
---     COALESCE(f.perc_tarefas_abertas * 100, 0)   AS perc_tarefas_abertas,
-
-	-- ==========================================
-	-- NOVAS FEATURES: SAÚDE & ATRITO TÉCNICO
-	-- ==========================================
 	
+	-- SAÚDE & ATRITO TÉCNICO	
 	-- 1. PROPORÇÃO DE ATRITO CRÍTICO RECENTE
 	-- Mede a porcentagem das tarefas dos últimos 90 dias que foram motivadas por Bugs ou Reclamações.
 	-- Evita a divisão por zero caso o cliente esteja em silêncio absoluto na janela de 90 dias.
@@ -309,21 +289,27 @@ SELECT
 
 	-- 2. ÍNDICE DE TENDÊNCIA DE CHAMADOS (ANOMALIA DE VOLUME)
 	-- Compara o volume diário dos últimos 90 dias com a média diária histórica de todo o ciclo de vida do cliente.
-	-- Valores muito superiores a 1.0 indicam que o cliente entrou em uma crise operacional abrupta de chamados.
+	-- Resultado = 1.0 (Normalidade): O cliente está abrindo chamados exatamente no mesmo ritmo de sempre. A operação dele está estável.
+	-- Resultado Próximo de 0 (Silenciamento): Significa que o volume dos últimos 90 dias caiu drasticamente se comparado ao passado. O cliente está parando de usar o suporte (Alerta de Churn Silencioso!).
+	-- Resultado Superior a 2.0 ou 3.0 (Anomalia/Crise): Significa que o cliente está abrindo 2 a 3 vezes mais chamados por dia agora do que a média histórica dele.
 	CASE
-		WHEN (COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) > 0
+		WHEN (COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) > 0 -- Volume de chamados que ele abriu na vida, tirando os últimos 3 meses
 			 THEN ROUND(
-				(COALESCE(f.tarefas_90d, 0) / 90.0) / 
-				((COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) / 
-				 GREATEST(1, DATEDIFF(CURDATE(), c.primeira_assinatura))), 2
+				(COALESCE(f.tarefas_90d, 0) / 90) / -- Frequência diária atual do cliente
+				( -- Comportamento histórico de base do cliente
+					(COALESCE(f.qtd_tarefas_total, 0) - COALESCE(f.tarefas_90d, 0)) /
+						-- GREATEST(1, ...) é uma blindagem para o caso de um cliente ter entrado hoje
+				 		GREATEST(1, DATEDIFF(CURDATE(), c.primeira_assinatura))), 2
 			 )
-		ELSE 1.0
+		ELSE 1
 	END AS index_tendencia_volume_recentes,
 
-	-- 3. EFICIÊNCIA DE ATENDIMENTO VS TAMANHO DO CLIENTE (MÉTRICA ENTERPRISE)
+	-- 3. EFICIÊNCIA DE ATENDIMENTO VS TAMANHO DO CLIENTE
 	-- Multiplica o tempo médio de resolução de reclamações pelo faturamento mensal ativo.
 	-- O objetivo é penalizar severamente a lentidão no suporte para contas de alto MRR (Alto valor com alto SLA estourado = Risco Crítico).
-	ROUND(COALESCE(f.media_dias_exec_reclamacao, 0) * COALESCE(c.valor_ativo_total, 0), 2) AS score_atrito_sla_financeiro,
+	ROUND(
+		COALESCE(f.media_dias_exec_reclamacao, 0) * COALESCE(c.valor_ativo_total, 0),
+		2) AS score_atrito_sla_financeiro,
 
     -- TARGET (y)
     c.churn

@@ -1,6 +1,5 @@
 [
-    "flg_ja_sofreu_downgrade",
-    "tarefas_90d",
+    "flag_ja_sofreu_downgrade",
     "qt_tarefas_sd",
     "media_dias_exec_tarefa_sd",
     "qt_tarefas_hd",
@@ -12,5 +11,8 @@
     "qt_tarefas_bug",
     "media_dias_exec_bug",
     "dias_ultima_tarefa",
-    "qtd_categorias_distintas"
+    "qtd_categorias_distintas",
+    "prop_atrito_recentes_percentual",
+    "index_tendencia_volume_recentes",
+    "score_atrito_sla_financeiro"
 ]
