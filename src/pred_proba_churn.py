@@ -7,10 +7,11 @@ from    datetime import datetime
 from    config_db import obter_engine_banco
 
 
-CAMINHO_SRC     = os.path.dirname(os.path.abspath(__file__))    # pasta /src
-RAIZ_PROJETO    = os.path.dirname(CAMINHO_SRC)                  # pasta raiz
+# CONFIGURAÇÕES DE CAMINHOS E DIRETÓRIOS (ORQUESTRAÇÃO)
+CAMINHO_SRC     = os.path.dirname(os.path.abspath(__file__))    # Pasta /src
+RAIZ_PROJETO    = os.path.dirname(CAMINHO_SRC)                  # Pasta raiz
 
-# Mapeamento dos artefatos dentro de /src
+# Mapeamento dos artefatos de Data Science dentro de /src
 NOME_MODELO             = 'modelo_xgb'
 ARQUIVO_MODELO_PKL      = f"{NOME_MODELO}.pkl"
 CAMINHO_MODELO_PKL      = os.path.join(CAMINHO_SRC, ARQUIVO_MODELO_PKL)
@@ -24,123 +25,124 @@ PASTA_RESULTADOS      = os.path.join(RAIZ_PROJETO, "dados_resultado")
 # Mapeamento dinâmico do arquivo SQL na pasta dados_brutos
 CAMINHO_QUERY_SQL     = os.path.join(RAIZ_PROJETO, "dados_brutos", "tarefas_clientes_ativos_logistic_regression.sql")
 
-# Configuração básica de logs
+# CONFIGURAÇÃO DO LOG
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.FileHandler(CAMINHO_LOG_ARQUIVO, encoding='utf-8'), logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler(CAMINHO_LOG_ARQUIVO, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 
-def carregar_query_producao(caminho_sql):
-    """Lê o arquivo .sql externo de forma segura e escapa os caracteres '%' para o Python."""
-    if not os.path.exists(caminho_sql):
-        raise FileNotFoundError(f"Arquivo de query não encontrado em: {caminho_sql}")
-    
-    with open(caminho_sql, 'r', encoding='utf-8') as f:
-        query = f.read()
-    
-    # Escapa os '%' duplicando-os, transformando '%bug%' em '%%bug%%' para o motor do SQLAlchemy
-    return query.replace("%", "%%")
+def executar_pipeline_predicao():
+    logging.info("%s", "*" * 50)
+    logging.info("INICIANDO PIPELINE DE PREDIÇÃO DE CHURN - %s", NOME_MODELO)
 
-def executar_pipeline_producao():
-    logging.info(f"\n{'*' * 40}\nIniciando rotina diária de probabilidade de Churn...")
-    
-    # Carregamento de Artefatos com Caminhos Absolutos
+    # CARREGAMENTO DOS ARTEFATOS DO MODELO
     try:
-        model  = joblib.load(CAMINHO_MODELO_PKL)
+        logging.info("Carregando modelo preditivo: %s", ARQUIVO_MODELO_PKL)
+        modelo = joblib.load(CAMINHO_MODELO_PKL)
+
+        logging.info("Carregando transformador de escala: %s", CAMINHO_SCALER_PKL)
         scaler = joblib.load(CAMINHO_SCALER_PKL)
+    except Exception:
+        logging.error("Falha crítica no carregamento dos binários (.pkl) do modelo")
+        return
+
+    # LEITURA DO JSON DE FEATURES
+    try:
+        logging.info("Lendo features em: %s", os.path.basename(CAMINHO_FEATURES_JSON))
         with open(CAMINHO_FEATURES_JSON, 'r', encoding='utf-8') as f:
-            features_obrigatorias = json.load(f)
-
-        # Leitura dinâmica da query externa
-        query_clientes_ativos = carregar_query_producao(CAMINHO_QUERY_SQL)
-                
-        logging.info("Artefatos do modelo e query SQL carregados com sucesso.")
-    except Exception as e:
-        logging.error(f"Erro ao carregar arquivos de configuração/modelo: {str(e)}")
+            features_modelo = json.load(f)
+        logging.info("Sucesso! %d features mapeadas do JSON.", len(features_modelo))
+    except FileNotFoundError as e:
+        logging.error("Falha ao ler o arquivo de mapeamento JSON: %s", e)
         return
 
-    # Extração Isolada do Banco
+    # EXTRAÇÃO DOS DADOS BRUTOS (SQL)
     try:
-        engine = obter_engine_banco()
-        with engine.connect() as conexao:
-            logging.info("Conectando e extraindo clientes ativos...")
-            df_banco = pd.read_sql(query_clientes_ativos, conexao)
-        logging.info(f"Dados extraídos com sucesso. Registros: {len(df_banco)}")
-    except Exception as e:
-        logging.error(f"Falha na extração de dados: {str(e)}")
+        logging.info("Carregando query de extração: %s", os.path.basename(CAMINHO_QUERY_SQL))
+        with open(CAMINHO_QUERY_SQL, 'r', encoding='utf-8') as f:
+            query_sql = f.read()
+
+        query_tratada = query_sql.replace('%', '%%')
+
+        logging.info("Conectando ao banco de dados e executando extração...")
+        engine      = obter_engine_banco()
+        df_bruto    = pd.read_sql(query_tratada, con=engine)
+        print(df_bruto.filter(regex='casa').columns)
+        logging.info("Extração concluída com sucesso.")
+    except Exception:
+        logging.exception("Erro na fase de comunicação/extração do banco de dados")
         return
 
-    # Blindagem de Schema
+    # VALIDAÇÃO DEFENSIVA E ALINHAMENTO DO DATASET
     try:
-        if df_banco.empty:
-            raise ValueError("O DataFrame retornado pelo banco está vazio.")
-            
-        colunas_faltantes = set(features_obrigatorias) - set(df_banco.columns)
+        logging.info("Iniciando validação de consistência das colunas...")
+
+        # Identifica se alguma coluna exigida pelo modelo não veio na extração do banco
+        colunas_faltantes = [col for col in features_modelo if col not in df_bruto.columns]
         if colunas_faltantes:
-            raise ValueError(f"Incompatibilidade de Schema! Colunas ausentes: {colunas_faltantes}")
+            raise KeyError(f"As seguintes colunas exigidas pelo modelo estão ausentes no banco: {colunas_faltantes}")
 
-        X_producao          = df_banco[features_obrigatorias]
-        codigos_clientes    = df_banco['cod_cliente']
-    except Exception as e:
-        logging.error(f"Falha na validação estrutural: {str(e)}")
+        # Filtra e ordena as colunas exatamente na ordem estrita que o modelo espera
+        x_inferencia = df_bruto[features_modelo].copy()
+
+        logging.info("Estrutura da Matriz de Inferência (X) validada e alinhada com sucesso.")
+    except KeyError as e:
+        logging.error("Quebra de consistência nos dados de entrada: %s", e)
+    except Exception:
+        logging.exception("Erro inesperado na validação dos dados")
         return
 
-    # Predição
+    # EXECUÇÃO DO PROCESSO PREDIR (SCALING + INFERÊNCIA)
     try:
-        X_producao_scaled   = scaler.transform(X_producao)
-        probabilidades      = model.predict_proba(X_producao_scaled)[:, 1]
-        
-        # 1. Montamos o DataFrame Final puxando as métricas preditas e os dados de contexto do df_banco
-        df_final = pd.DataFrame({
-            'cod_cliente':              codigos_clientes,
-            'risco_churn_percentual':   probabilidades,
-            
-            # Contexto Financeiro e Contratual (essencial para o CS priorizar por receita!)
-            'valor_mensal_ativo':   df_banco['valor_ativo_total'],
-            'qtd_contratos_ativos': df_banco['qtd_contratos_ativos'].astype(int),
-            'ja_sofreu_downgrade':  df_banco['flag_ja_sofreu_downgrade'].astype(int),
-            
-            # Comportamento e Engajamento Recente vs Histórico
-            'dias_sem_abrir_chamado':       X_producao['dias_ultima_tarefa'].astype(int),
-            # 'chamados_ultimos_90_dias':     df_banco['tarefas_90d'].astype(int),
-            'total_chamados_historico':     df_banco['qtd_tarefas_total'].astype(int),
-            'media_dias_resolucao_chamado': df_banco['media_dias_exec'],
-            
-            # Alertas Críticos de Atrito
-            'qt_chamados_bug':                  X_producao['qt_tarefas_bug'].astype(int),
-            'qt_chamados_reclamacao':           X_producao['qt_tarefas_reclamacao'].astype(int),
-            'media_dias_resolucao_reclamacao':  df_banco['media_dias_exec_reclamacao']
-        })
-        
-        # 2. Arredondamentos sênior do Pandas para o Excel ficar limpo
-        df_final['risco_churn_percentual']          = df_final['risco_churn_percentual'].astype(float).round(2)
-        # df_final['meses_de_casa']                   = df_final['meses_de_casa'].round(1)
-        df_final['valor_mensal_ativo']              = df_final['valor_mensal_ativo'].round(2)
-        df_final['media_dias_resolucao_chamado']    = df_final['media_dias_resolucao_chamado'].round(1)
-        df_final['media_dias_resolucao_reclamacao'] = df_final['media_dias_resolucao_reclamacao'].round(1)
-        
-        # 3. Ordenamos do maior risco para o menor (e em caso de empate, pelo maior valor de contrato)
-        df_final = df_final.sort_values(by=['risco_churn_percentual', 'valor_mensal_ativo'], ascending=[False, False])
-        
-        logging.info("Predição realizada e colunas de contexto acopladas com sucesso.")
-    except Exception as e:
-        logging.error(f"Erro durante a fase de predição/estruturação: {str(e)}")
+        logging.info("Aplicando padronização dimensional...")
+        X_scaled = scaler.transform(x_inferencia)
+
+        logging.info("Calculando probabilidades de Churn via inferência do modelo...")
+        # Captura a probabilidade da classe positiva (Churn = 1)
+        probabilidades = modelo.predict_proba(X_scaled)[:, 1]
+    except Exception:
+        logging.exception("Falha matemática durante o processamento do algoritmo")
         return
 
-    # Exportação Protegida para /dados_resultado
+    # ESTRUTURAÇÃO DO RELATÓRIO EXECUTIVO DE SAÍDA
     try:
-        # Cria a pasta caso ela não exista no servidor
+        logging.info("Adicionando resultados ao contexto analítico do cliente...")
+        df_final = df_bruto.copy()
+
+        df_final['risco_churn_percentual'] = probabilidades
+
+        # Formatação e arredondamentos para evitar sujeira visual no Excel
+        df_final['risco_churn_percentual'] = df_final['risco_churn_percentual'].round(2)
+        df_final['media_dias_exec']        = df_final['media_dias_exec'].round(1)
+
+        if 'media_dias_exec_reclamacao' in df_final.columns:
+            df_final['media_dias_exec_reclamacao'] = df_final['media_dias_exec_reclamacao'].round(1)
+
+        # Ordenação por prioridade dos maiores riscos da carteira
+        df_final = df_final.sort_values(by=['risco_churn_percentual'], ascending=False)
+        logging.info("Predição realizada e colunas de contexto adicionadas com sucesso.")
+    except Exception:
+        logging.exception("Erro durante a fase de estruturação do DataFrame final")
+        return
+
+    # EXPORTAÇÃO PROTEGIDA PARA /DADOS_RESULTADO
+    try:
         os.makedirs(PASTA_RESULTADOS, exist_ok=True)
-        
         data_atual          = datetime.now().strftime("%Y-%m-%d")
         nome_arquivo        = f"relatorio_risco_churn_{NOME_MODELO}_{data_atual}.xlsx"
         caminho_salvamento  = os.path.join(PASTA_RESULTADOS, nome_arquivo)
+        logging.info("Salvando relatório executivo final em: %s", caminho_salvamento)
         
-        df_final.to_excel(caminho_salvamento, index=False)
-        logging.info(f"🚀 SUCESSO! Relatório diário gerado e salvo em: {caminho_salvamento}")
-    except Exception as e:
-        logging.error(f"Erro ao salvar arquivo de saída: {str(e)}")
+        df_final.to_excel(caminho_salvamento, index=False, engine='openpyxl')
+        logging.info("PIPELINE EXECUTADO COM SUCESSO.")
+
+    except Exception:
+        logging.exception("Falha ao persistir arquivo de saída")
+        return
 
 if __name__ == "__main__":
-    executar_pipeline_producao()
+    executar_pipeline_predicao()

@@ -1,8 +1,8 @@
 [
     "flag_ja_sofreu_downgrade",
+    "media_dias_exec",
     "qt_tarefas_sd",
     "media_dias_exec_tarefa_sd",
-    "qt_tarefas_hd",
     "media_dias_exec_tarefa_hd",
     "qt_tarefas_reclamacao",
     "media_dias_exec_reclamacao",
@@ -10,9 +10,11 @@
     "media_dias_exec_reducao",
     "qt_tarefas_bug",
     "media_dias_exec_bug",
+    "qt_bugs_abertos_atual",
+    "qt_reclamacoes_abertas_atual",
+    "qt_reducoes_abertas_atual",
     "dias_ultima_tarefa",
-    "qtd_categorias_distintas",
-    "prop_atrito_recentes_percentual",
-    "index_tendencia_volume_recentes",
-    "score_atrito_sla_financeiro"
+    "qt_categorias_distintas",
+    "score_atrito_sla_financeiro",
+    "meses_de_casa"
 ]
