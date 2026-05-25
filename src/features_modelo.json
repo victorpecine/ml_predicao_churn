@@ -3,6 +3,7 @@
     "media_dias_exec",
     "qt_tarefas_sd",
     "media_dias_exec_tarefa_sd",
+    "qt_tarefas_hd",
     "media_dias_exec_tarefa_hd",
     "qt_tarefas_reclamacao",
     "media_dias_exec_reclamacao",
@@ -15,6 +16,5 @@
     "qt_reducoes_abertas_atual",
     "dias_ultima_tarefa",
     "qt_categorias_distintas",
-    "score_atrito_sla_financeiro",
     "meses_de_casa"
 ]

@@ -42,7 +42,12 @@ tb_tarefas AS (
         otb.cliente AS cod_cliente,
         otb.data_cad,
         otb.data_exe,
-        DATEDIFF(otb.data_exe, otb.data_cad) AS dias_exec_tarefa,
+        -- Blindagem contra o outlier de dias negativos
+		CASE
+		    WHEN otb.data_exe IS NOT NULL AND otb.data_exe >= otb.data_cad 
+		    THEN DATEDIFF(otb.data_exe, otb.data_cad)
+		    ELSE NULL -- Ignora inserções retroativas erradas
+		END AS dias_exec_tarefa,
         otb.categoria,
         stv1.dst AS descr_categoria,
         otb.subcategoria,
@@ -159,7 +164,7 @@ SELECT
     c.flag_ja_sofreu_downgrade,
 
     -- FEATURES OPERACIONAIS DE SUPORTE
-    COALESCE(f.qt_tarefas_total, 0)            AS qt_tarefas_total,
+    COALESCE(f.qt_tarefas_total, 0)            	AS qt_tarefas_total,
     COALESCE(f.media_dias_exec, 0)              AS media_dias_exec,
     
     COALESCE(f.qt_tarefas_sd, 0)                AS qt_tarefas_sd,
@@ -191,21 +196,16 @@ SELECT
             DATEDIFF(CURDATE(), COALESCE(f.data_ultima_tarefa_real, c.primeira_assinatura))
     END AS dias_ultima_tarefa,
     
-    COALESCE(f.qt_categorias_distintas, 0)     AS qt_categorias_distintas,
-    COALESCE(f.qt_subcategorias_distintas, 0)  AS qt_subcategorias_distintas,
-    COALESCE(f.qt_grupos_envolvidos, 0)        AS qt_grupos_envolvidos,
+    COALESCE(f.qt_categorias_distintas, 0)     	AS qt_categorias_distintas,
+    COALESCE(f.qt_subcategorias_distintas, 0)  	AS qt_subcategorias_distintas,
+    COALESCE(f.qt_grupos_envolvidos, 0)        	AS qt_grupos_envolvidos,
 
-    COALESCE(f.qt_prioridade_normal, 0)        AS qt_prioridade_normal,
-    COALESCE(f.qt_prioridade_parcial, 0)       AS qt_prioridade_parcial,
-    COALESCE(f.qt_prioridade_urgente, 0)       AS qt_prioridade_urgente,
-    COALESCE(f.qt_prioridade_maxima, 0)        AS qt_prioridade_maxima,
-    COALESCE(f.qt_prioridade_reforco, 0)       AS qt_prioridade_reforco,
+    COALESCE(f.qt_prioridade_normal, 0)        	AS qt_prioridade_normal,
+    COALESCE(f.qt_prioridade_parcial, 0)       	AS qt_prioridade_parcial,
+    COALESCE(f.qt_prioridade_urgente, 0)       	AS qt_prioridade_urgente,
+    COALESCE(f.qt_prioridade_maxima, 0)        	AS qt_prioridade_maxima,
+    COALESCE(f.qt_prioridade_reforco, 0)       	AS qt_prioridade_reforco,
     COALESCE(f.perc_prioridade_maxima * 100, 0) AS perc_prioridade_maxima,
-
-    -- SLA FINANCEIRO (Ponderação interna pelo faturamento ativo)
-    ROUND(
-        COALESCE(f.media_dias_exec_reclamacao, 0) * COALESCE(c.valor_ativo_total, 0),
-        2) AS score_atrito_sla_financeiro,
 
     -- TARGET (y)
     c.churn
