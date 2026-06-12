@@ -220,4 +220,6 @@ __marimo__/
 # Excel and CSV files
 *.csv
 *.xlsx
+
+# Modelos
 src/*.pkl
