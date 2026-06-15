@@ -12,7 +12,7 @@ CAMINHO_SRC     = os.path.dirname(os.path.abspath(__file__))    # Pasta /src
 RAIZ_PROJETO    = os.path.dirname(CAMINHO_SRC)                  # Pasta raiz
 
 # Mapeamento dos artefatos de Data Science dentro de /src
-NOME_MODELO             = 'modelo_xgb_calibrado'
+NOME_MODELO             = 'modelo_rf'
 ARQUIVO_MODELO_PKL      = f"{NOME_MODELO}.pkl"
 CAMINHO_MODELO_PKL      = os.path.join(CAMINHO_SRC, ARQUIVO_MODELO_PKL)
 CAMINHO_SCALER_PKL      = os.path.join(CAMINHO_SRC, 'scaler_producao.pkl')
