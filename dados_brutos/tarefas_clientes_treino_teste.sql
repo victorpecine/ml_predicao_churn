@@ -164,8 +164,8 @@ SELECT
     c.flag_ja_sofreu_downgrade,
 
     -- FEATURES OPERACIONAIS DE SUPORTE
-    COALESCE(f.qt_tarefas_total, 0)            	AS qt_tarefas_total,
-    COALESCE(f.media_dias_exec, 0)              AS media_dias_exec,
+    COALESCE(f.qt_tarefas_total, 	0)	AS qt_tarefas_total,
+    COALESCE(f.media_dias_exec,		0)  AS media_dias_exec,
     
     COALESCE(f.qt_tarefas_sd, 0)                AS qt_tarefas_sd,
     COALESCE(f.media_dias_exec_tarefa_sd, 0)    AS media_dias_exec_tarefa_sd,
@@ -183,10 +183,10 @@ SELECT
     COALESCE(f.media_dias_exec_bug, 0)          AS media_dias_exec_bug,
 
     -- NOVAS FEATURES DE ESTOQUE DE PENDÊNCIAS EM ABERTO (Gatilho do Power BI)
-    COALESCE(f.qt_tarefas_abertas_atual, 0)     AS qt_tarefas_abertas_atual,
-    COALESCE(f.qt_bugs_abertos_atual, 0)        AS qt_bugs_abertos_atual,
-    COALESCE(f.qt_reclamacoes_abertas_atual, 0) AS qt_reclamacoes_abertas_atual,
-    COALESCE(f.qt_reducoes_abertas_atual, 0)    AS qt_reducoes_abertas_atual,
+    COALESCE(f.qt_tarefas_abertas_atual,		0)	AS qt_tarefas_abertas_atual,
+    COALESCE(f.qt_bugs_abertos_atual,			0)  AS qt_bugs_abertos_atual,
+    COALESCE(f.qt_reclamacoes_abertas_atual, 	0)	AS qt_reclamacoes_abertas_atual,
+    COALESCE(f.qt_reducoes_abertas_atual,		0)  AS qt_reducoes_abertas_atual,
     
     -- RECÊNCIA CONVERTIDA
     CASE 
@@ -196,14 +196,14 @@ SELECT
             DATEDIFF(CURDATE(), COALESCE(f.data_ultima_tarefa_real, c.primeira_assinatura))
     END AS dias_ultima_tarefa,
     
-    COALESCE(f.qt_categorias_distintas, 0)     	AS qt_categorias_distintas,
-    COALESCE(f.qt_subcategorias_distintas, 0)  	AS qt_subcategorias_distintas,
-    COALESCE(f.qt_grupos_envolvidos, 0)        	AS qt_grupos_envolvidos,
+    COALESCE(f.qt_categorias_distintas, 	0)	AS qt_categorias_distintas,
+    COALESCE(f.qt_subcategorias_distintas,	0)  AS qt_subcategorias_distintas,
+    COALESCE(f.qt_grupos_envolvidos,	 	0)  AS qt_grupos_envolvidos,
 
-    COALESCE(f.qt_prioridade_normal, 0)        	AS qt_prioridade_normal,
+    COALESCE(f.qt_prioridade_normal,  0)        AS qt_prioridade_normal,
     COALESCE(f.qt_prioridade_parcial, 0)       	AS qt_prioridade_parcial,
     COALESCE(f.qt_prioridade_urgente, 0)       	AS qt_prioridade_urgente,
-    COALESCE(f.qt_prioridade_maxima, 0)        	AS qt_prioridade_maxima,
+    COALESCE(f.qt_prioridade_maxima,  0)        AS qt_prioridade_maxima,
     COALESCE(f.qt_prioridade_reforco, 0)       	AS qt_prioridade_reforco,
     COALESCE(f.perc_prioridade_maxima * 100, 0) AS perc_prioridade_maxima,
 
@@ -211,4 +211,6 @@ SELECT
     c.churn
 
 FROM tb_clientes c
-LEFT JOIN tb_features f ON c.cod_cliente = f.cod_cliente;
+LEFT JOIN tb_features f ON c.cod_cliente = f.cod_cliente
+-- WHERE c.cod_cliente = 45615
+;
