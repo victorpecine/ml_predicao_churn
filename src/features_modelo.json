@@ -1,18 +1,13 @@
 [
-    "flag_ja_sofreu_downgrade",
+    "valor_medio_contrato",
+    "meses_vida_cliente",
+    "qt_tarefas_total",
     "media_dias_exec",
-    "qt_tarefas_sd",
     "media_dias_exec_tarefa_sd",
-    "qt_tarefas_hd",
+    "perc_qt_tarefas_sd",
     "media_dias_exec_tarefa_hd",
-    "qt_tarefas_reclamacao",
-    "media_dias_exec_reclamacao",
-    "qt_tarefas_reducao",
-    "media_dias_exec_reducao",
-    "qt_tarefas_bug",
-    "media_dias_exec_bug",
-    "qt_bugs_abertos_atual",
-    "qt_reclamacoes_abertas_atual",
-    "qt_reducoes_abertas_atual",
-    "dias_ultima_tarefa"
+    "perc_qt_tarefas_hd",
+    "perc_qt_prioridade_normal",
+    "perc_qt_prioridade_parcial",
+    "perc_qt_prioridade_maxima"
 ]

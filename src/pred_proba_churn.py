@@ -11,19 +11,18 @@ from    config_db import obter_engine_banco
 CAMINHO_SRC     = os.path.dirname(os.path.abspath(__file__))    # Pasta /src
 RAIZ_PROJETO    = os.path.dirname(CAMINHO_SRC)                  # Pasta raiz
 
-# Mapeamento dos artefatos de Data Science dentro de /src
-NOME_MODELO             = 'modelo_rf'
-ARQUIVO_MODELO_PKL      = f"{NOME_MODELO}.pkl"
-CAMINHO_MODELO_PKL      = os.path.join(CAMINHO_SRC, ARQUIVO_MODELO_PKL)
-CAMINHO_SCALER_PKL      = os.path.join(CAMINHO_SRC, 'scaler_producao.pkl')
+# Mapeamento dos artefatos de /src
+NOME_MODELO             = 'xgb_tuning'
+ARQUIVO_PIPELINE_PKL    = f"pipeline_{NOME_MODELO}.pkl"
+CAMINHO_PIPELINE_PKL    = os.path.join(CAMINHO_SRC, ARQUIVO_PIPELINE_PKL)
 CAMINHO_FEATURES_JSON   = os.path.join(CAMINHO_SRC, 'features_modelo.json')
 
 # Direcionamento do Log e do Resultado para as pastas corretas
-CAMINHO_LOG_ARQUIVO   = os.path.join(CAMINHO_SRC, "execucao_churn.log")
+CAMINHO_LOG_ARQUIVO   = os.path.join(CAMINHO_SRC,  "execucao_churn.log")
 PASTA_RESULTADOS      = os.path.join(RAIZ_PROJETO, "dados_resultado")
 
 # Mapeamento dinâmico do arquivo SQL na pasta dados_brutos
-CAMINHO_QUERY_SQL     = os.path.join(RAIZ_PROJETO, "dados_brutos", "tarefas_clientes_ativos_logistic_regression.sql")
+CAMINHO_QUERY_SQL     = os.path.join(RAIZ_PROJETO, "dados_brutos", "tarefas_clientes_ativos_producao.sql")
 
 # CONFIGURAÇÃO DO LOG
 logging.basicConfig(
@@ -41,13 +40,10 @@ def executar_pipeline_predicao():
 
     # CARREGAMENTO DOS ARTEFATOS DO MODELO
     try:
-        logging.info("Carregando modelo preditivo: %s", ARQUIVO_MODELO_PKL)
-        modelo = joblib.load(CAMINHO_MODELO_PKL)
-
-        logging.info("Carregando transformador de escala: %s", CAMINHO_SCALER_PKL)
-        scaler = joblib.load(CAMINHO_SCALER_PKL)
+        logging.info("Carregando pipeline: %s", ARQUIVO_PIPELINE_PKL)
+        pipeline = joblib.load(CAMINHO_PIPELINE_PKL)
     except Exception:
-        logging.error("Falha crítica no carregamento dos binários (.pkl) do modelo")
+        logging.error("Falha crítica no carregamento do pipeline .pkl")
         return
 
     # LEITURA DO JSON DE FEATURES
@@ -96,16 +92,13 @@ def executar_pipeline_predicao():
         logging.exception("Erro inesperado na validação dos dados")
         return
 
-    # EXECUÇÃO DO PROCESSO PREDIR (SCALING + INFERÊNCIA)
+    # EXECUÇÃO DO PROCESSO PREDIÇÃO VIA PIPELINE
     try:
-        logging.info("Aplicando padronização dimensional...")
-        X_scaled = scaler.transform(x_inferencia)
-
-        logging.info("Calculando probabilidades de Churn via inferência do modelo...")
-        # Captura a probabilidade da classe positiva (Churn = 1)
-        probabilidades = modelo.predict_proba(X_scaled)[:, 1]
+        logging.info("Calculando probabilidades via pipeline...")
+        # O pipeline aplica o scaler automaticamente e depois o modelo
+        probabilidades = pipeline.predict_proba(x_inferencia)[:, 1]
     except Exception:
-        logging.exception("Falha matemática durante o processamento do algoritmo")
+        logging.exception("Falha durante a predição")
         return
 
     # ESTRUTURAÇÃO DO RELATÓRIO EXECUTIVO DE SAÍDA
@@ -136,7 +129,7 @@ def executar_pipeline_predicao():
         nome_arquivo        = f"relatorio_risco_churn_{NOME_MODELO}_{data_atual}.xlsx"
         caminho_salvamento  = os.path.join(PASTA_RESULTADOS, nome_arquivo)
         logging.info("Salvando relatório executivo final em: %s", caminho_salvamento)
-        
+
         df_final.to_excel(caminho_salvamento, index=False, engine='openpyxl')
         logging.info("PIPELINE EXECUTADO COM SUCESSO.")
 
